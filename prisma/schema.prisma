@@ -1,0 +1,192 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Auth (solo usuarios admin) ────────────────────────────────────────────────
+
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+  OPERADOR
+}
+
+model User {
+  id        String    @id @default(cuid())
+  name      String?
+  email     String    @unique
+  password  String?
+  role      AdminRole @default(OPERADOR)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+  actions  DeliveryAction[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("password_reset_tokens")
+}
+
+// ── Dominio Principal ─────────────────────────────────────────────────────────
+
+enum PersonRole {
+  DONANTE
+  TRANSPORTISTA
+  VOLUNTARIO
+  FAMILIAR
+}
+
+enum VehicleType {
+  AUTO
+  MOTO
+  CAMION
+  OTRO
+}
+
+enum AidType {
+  MEDICAMENTOS
+  ALIMENTOS
+  AGUA
+  OTRO
+}
+
+enum Priority {
+  URGENTE
+  ALTA
+  NORMAL
+}
+
+enum DeliveryStatus {
+  PENDIENTE
+  APROBADO
+  EN_TRANSITO
+  COMPLETADO
+  RECHAZADO
+}
+
+model Delivery {
+  id String @id @default(cuid())
+
+  // Persona
+  fullName   String
+  cedula     String
+  phone      String?
+  address    String?
+  personRole PersonRole
+
+  // Vehículo (solo si personRole = TRANSPORTISTA)
+  vehicleType VehicleType?
+  plate       String?
+  brand       String?
+  color       String?
+  driverName  String?
+
+  // Insumos
+  destSector String
+  recipient  String
+  aidType    AidType
+  quantity   String
+  priority   Priority @default(NORMAL)
+  notes      String?  @db.Text
+
+  // Credencial QR
+  qrToken String  @unique @db.Text
+  qrCode  String? @db.Text
+
+  // Ciclo de vida
+  status    DeliveryStatus @default(PENDIENTE)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  scans   DeliveryScan[]
+  actions DeliveryAction[]
+
+  @@map("deliveries")
+  @@index([status])
+  @@index([cedula])
+  @@index([priority, status])
+  @@index([createdAt])
+}
+
+model DeliveryScan {
+  id         String   @id @default(cuid())
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  scannedAt  DateTime @default(now())
+  location   String?
+  deviceInfo String?
+  operatorId String?
+
+  @@map("delivery_scans")
+  @@index([deliveryId])
+  @@index([scannedAt])
+}
+
+model DeliveryAction {
+  id         String         @id @default(cuid())
+  deliveryId String
+  delivery   Delivery       @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  action     DeliveryStatus
+  adminId    String?
+  admin      User?          @relation(fields: [adminId], references: [id])
+  note       String?
+  timestamp  DateTime       @default(now())
+
+  @@map("delivery_actions")
+  @@index([deliveryId])
+  @@index([timestamp])
+}
