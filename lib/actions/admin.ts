@@ -5,15 +5,21 @@ import { prisma } from '@/lib/db/prisma';
 import { verifyQR } from '@/lib/utils/qr-signature';
 import { AdminRole, DeliveryStatus, Priority } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
+import bcrypt from 'bcryptjs';
 
 async function requireAdmin() {
   const session = await auth();
   if (!session) throw new Error('No autorizado');
-  if (![AdminRole.SUPER_ADMIN, AdminRole.ADMIN, AdminRole.OPERADOR].includes(session.user.role)) {
-    throw new Error('No autorizado');
-  }
   return session;
 }
+
+async function requireSuperAdmin() {
+  const session = await auth();
+  if (!session || session.user.role !== AdminRole.SUPER_ADMIN) throw new Error('Solo SUPER_ADMIN');
+  return session;
+}
+
+// ── Stats ────────────────────────────────────────────────────────────────────
 
 export async function getStats() {
   await requireAdmin();
@@ -24,8 +30,10 @@ export async function getStats() {
     prisma.delivery.count({ where: { status: DeliveryStatus.COMPLETADO } }),
     prisma.delivery.count({ where: { status: DeliveryStatus.RECHAZADO } }),
   ]);
-  return { pending, aprobado, enTransito, completado, rechazado, total: pending + aprobado + enTransito + completado + rechazado };
+  return { pending, aprobado, enTransito, completado, rechazado };
 }
+
+// ── Entregas ─────────────────────────────────────────────────────────────────
 
 export async function getAllDeliveries(filters?: {
   status?: DeliveryStatus;
@@ -33,7 +41,6 @@ export async function getAllDeliveries(filters?: {
   search?: string;
 }) {
   await requireAdmin();
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = {};
   if (filters?.status) where.status = filters.status;
@@ -46,23 +53,13 @@ export async function getAllDeliveries(filters?: {
       { destSector: { contains: filters.search, mode: 'insensitive' } },
     ];
   }
-
   return prisma.delivery.findMany({
     where,
     orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
     select: {
-      id: true,
-      fullName: true,
-      cedula: true,
-      personRole: true,
-      plate: true,
-      destSector: true,
-      recipient: true,
-      aidType: true,
-      quantity: true,
-      priority: true,
-      status: true,
-      createdAt: true,
+      id: true, fullName: true, cedula: true, personRole: true,
+      plate: true, destSector: true, recipient: true, aidType: true,
+      quantity: true, priority: true, status: true, createdAt: true,
     },
   });
 }
@@ -81,11 +78,7 @@ export async function getDeliveryDetail(id: string) {
   });
 }
 
-async function changeStatus(
-  id: string,
-  newStatus: DeliveryStatus,
-  note?: string
-) {
+async function changeStatus(id: string, newStatus: DeliveryStatus, note?: string) {
   const session = await requireAdmin();
   await prisma.$transaction([
     prisma.delivery.update({ where: { id }, data: { status: newStatus } }),
@@ -120,53 +113,67 @@ export async function completeDelivery(id: string) {
 export async function recordScan(token: string, location?: string): Promise<{
   success: boolean;
   delivery?: {
-    id: string;
-    fullName: string;
-    cedula: string;
-    personRole: string;
-    plate?: string | null;
-    destSector: string;
-    recipient: string;
-    aidType: string;
-    quantity: string;
-    priority: string;
-    status: string;
+    id: string; fullName: string; cedula: string; personRole: string;
+    plate?: string | null; destSector: string; recipient: string;
+    aidType: string; quantity: string; priority: string; status: string;
   };
   error?: string;
 }> {
   const payload = await verifyQR(token);
   if (!payload) return { success: false, error: 'QR inválido o manipulado' };
 
-  const delivery = await prisma.delivery.findUnique({
-    where: { qrToken: token },
-  });
-
+  const delivery = await prisma.delivery.findUnique({ where: { qrToken: token } });
   if (!delivery) return { success: false, error: 'Registro no encontrado' };
-  if (delivery.status === DeliveryStatus.RECHAZADO) {
+  if (delivery.status === DeliveryStatus.RECHAZADO)
     return { success: false, error: 'Este registro fue rechazado' };
-  }
 
-  await prisma.deliveryScan.create({
-    data: {
-      deliveryId: delivery.id,
-      location,
-    },
-  });
+  await prisma.deliveryScan.create({ data: { deliveryId: delivery.id, location } });
 
   return {
     success: true,
     delivery: {
-      id: delivery.id,
-      fullName: delivery.fullName,
-      cedula: delivery.cedula,
-      personRole: delivery.personRole,
-      plate: delivery.plate,
-      destSector: delivery.destSector,
-      recipient: delivery.recipient,
-      aidType: delivery.aidType,
-      quantity: delivery.quantity,
-      priority: delivery.priority,
-      status: delivery.status,
+      id: delivery.id, fullName: delivery.fullName, cedula: delivery.cedula,
+      personRole: delivery.personRole, plate: delivery.plate,
+      destSector: delivery.destSector, recipient: delivery.recipient,
+      aidType: delivery.aidType, quantity: delivery.quantity,
+      priority: delivery.priority, status: delivery.status,
     },
   };
+}
+
+// ── Usuarios admin ────────────────────────────────────────────────────────────
+
+export async function getAdminUsers() {
+  await requireSuperAdmin();
+  return prisma.user.findMany({
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true },
+  });
+}
+
+export async function createAdminUser(data: {
+  name: string;
+  email: string;
+  password: string;
+  role: AdminRole;
+}): Promise<{ success: boolean; error?: string }> {
+  await requireSuperAdmin();
+  const existing = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
+  if (existing) return { success: false, error: 'Ya existe un usuario con ese email' };
+
+  const hash = await bcrypt.hash(data.password, 12);
+  await prisma.user.create({
+    data: { name: data.name, email: data.email.toLowerCase(), password: hash, role: data.role, isActive: true },
+  });
+  revalidatePath('/admin/usuarios');
+  return { success: true };
+}
+
+export async function toggleUserActive(userId: string): Promise<{ success: boolean }> {
+  await requireSuperAdmin();
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { isActive: true } });
+  if (!user) return { success: false };
+  await prisma.user.update({ where: { id: userId }, data: { isActive: !user.isActive } });
+  revalidatePath('/admin/usuarios');
+  return { success: true };
 }
