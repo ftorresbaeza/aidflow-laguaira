@@ -10,3 +10,6 @@ build/
 .vercel/
 .vercel
 .env*.local
+coverage/
+*.tsbuildinfo
+public/demo.mp4
