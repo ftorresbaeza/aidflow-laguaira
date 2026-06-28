@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getDeliveryById } from '@/lib/actions/registration';
 import { CredentialCard } from '@/components/credencial/CredentialCard';
+import { ShareButtons } from '@/components/credencial/ShareButtons';
 
 export default async function CredencialPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -24,24 +25,30 @@ export default async function CredencialPage({ params }: { params: Promise<{ id:
 
         <CredentialCard delivery={delivery} />
 
-        {/* Actions */}
-        <div className="mt-6 space-y-3">
+        <ShareButtons
+          deliveryId={delivery.id}
+          fullName={delivery.fullName}
+          qrCode={delivery.qrCode}
+        />
+
+        {/* Secondary actions */}
+        <div className="mt-4 space-y-2">
           <a
             href="/registrar"
-            className="block w-full text-center bg-white border border-gray-200 text-gray-700 font-medium py-3 rounded-xl hover:bg-gray-50 transition-colors"
+            className="block w-full text-center bg-white border border-gray-200 text-gray-600 font-medium py-2.5 rounded-xl hover:bg-gray-50 transition-colors text-sm"
           >
             Registrar otra persona
           </a>
           <a
             href="/escanear"
-            className="block w-full text-center bg-blue-600 text-white font-medium py-3 rounded-xl hover:bg-blue-700 transition-colors"
+            className="block w-full text-center text-gray-400 text-sm py-2 hover:text-gray-600 transition-colors"
           >
-            Ir al escáner QR
+            Ir al escáner QR →
           </a>
         </div>
 
-        <p className="text-center text-xs text-gray-400 mt-5 px-4">
-          Comparta este enlace o tome una captura de pantalla del QR para presentarlo en los puntos de control.
+        <p className="text-center text-xs text-gray-400 mt-4 px-4">
+          Toma también una captura de pantalla del QR por si no tienes internet en el punto de control.
         </p>
       </div>
     </div>
