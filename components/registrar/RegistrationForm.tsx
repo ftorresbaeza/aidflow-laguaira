@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { submitRegistration, type RegistrationInput } from '@/lib/actions/registration';
 import { PersonRole, AidType, Priority, VehicleType } from '@prisma/client';
+import { useFormDraft } from '@/hooks/useFormDraft';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -638,6 +639,12 @@ function Step3({ form }: { form: Partial<RegistrationInput> }) {
 
 // ── Main form ─────────────────────────────────────────────────────────────────
 
+const FORM_DEFAULTS: Partial<RegistrationInput> = {
+  personRole: PersonRole.DONANTE,
+  priority: Priority.NORMAL,
+  aidType: AidType.MEDICAMENTOS,
+};
+
 export default function RegistrationForm() {
   const router = useRouter();
   const [step, setStep] = useState(1);
@@ -645,17 +652,41 @@ export default function RegistrationForm() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [stepError, setStepError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
 
-  const [form, setForm] = useState<Partial<RegistrationInput>>({
-    personRole: PersonRole.DONANTE,
-    priority: Priority.NORMAL,
-    aidType: AidType.MEDICAMENTOS,
-  });
+  const [form, setForm] = useState<Partial<RegistrationInput>>(FORM_DEFAULTS);
+
+  const { pending: draft, ready: draftReady, scheduleSave, clearDraft } = useFormDraft();
+
+  // Show draft banner once the DB check resolves
+  useEffect(() => {
+    if (draftReady && draft) setShowDraftBanner(true);
+  }, [draftReady, draft]);
+
+  // Save to IndexedDB on every form/step change
+  useEffect(() => {
+    if (!draftReady) return;
+    scheduleSave(form, step);
+  }, [form, step, draftReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function set<K extends keyof RegistrationInput>(key: K, value: RegistrationInput[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setFieldErrors((prev) => ({ ...prev, [key]: '' }));
     setStepError(null);
+  }
+
+  function restoreDraft() {
+    if (!draft) return;
+    setForm(draft.data);
+    setStep(draft.step);
+    setShowDraftBanner(false);
+  }
+
+  function discardDraft() {
+    clearDraft();
+    setShowDraftBanner(false);
+    setForm(FORM_DEFAULTS);
+    setStep(1);
   }
 
   function validateCurrentStep(): boolean {
@@ -713,6 +744,7 @@ export default function RegistrationForm() {
 
     const result = await submitRegistration(form as RegistrationInput);
     if (result.success) {
+      await clearDraft();
       router.push(`/credencial/${result.deliveryId}`);
     } else {
       setServerError(result.error);
@@ -728,6 +760,40 @@ export default function RegistrationForm() {
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-6">
+      {/* Draft restoration banner */}
+      {showDraftBanner && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-amber-800">Tienes un registro sin terminar</p>
+              <p className="text-xs text-amber-600 mt-0.5">¿Quieres continuar donde lo dejaste?</p>
+              <div className="flex gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={restoreDraft}
+                  className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold py-2 rounded-xl transition-colors"
+                >
+                  Continuar
+                </button>
+                <button
+                  type="button"
+                  onClick={discardDraft}
+                  className="flex-1 bg-white border border-amber-200 text-amber-700 text-sm font-semibold py-2 rounded-xl hover:bg-amber-50 transition-colors"
+                >
+                  Empezar de nuevo
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <StepIndicator current={step} />
 
       {/* Step title */}
