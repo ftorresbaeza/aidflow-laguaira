@@ -6,6 +6,7 @@ export default {
       testEnvironment: 'jsdom',
       transform: {
         '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' } }],
+        '^.+\\.js$': ['ts-jest', { tsconfig: { jsx: 'react-jsx' }, diagnostics: false }],
       },
       transformIgnorePatterns: ['/node_modules/(?!(jose)/)'],
       moduleNameMapper: {
