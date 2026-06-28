@@ -8,16 +8,19 @@
 ## Índice
 
 1. [Visión general](#1-visión-general)
-2. [Rutas y accesos](#2-rutas-y-accesos)
-3. [Registro público](#3-registro-público)
-4. [Credencial QR](#4-credencial-qr)
-5. [Punto de control — Escaneo QR](#5-punto-de-control--escaneo-qr)
-6. [Panel de administración](#6-panel-de-administración)
-7. [Gestión de usuarios admin](#7-gestión-de-usuarios-admin)
-8. [Exportación de datos](#8-exportación-de-datos)
-9. [Modelo de datos](#9-modelo-de-datos)
-10. [Roles y permisos](#10-roles-y-permisos)
-11. [Stack tecnológico](#11-stack-tecnológico)
+2. [Diagrama de flujo principal](#2-diagrama-de-flujo-principal)
+3. [Interacción entre actores](#3-interacción-entre-actores)
+4. [Estados de una entrega](#4-estados-de-una-entrega)
+5. [Rutas y accesos](#5-rutas-y-accesos)
+6. [Registro público](#6-registro-público)
+7. [Credencial QR](#7-credencial-qr)
+8. [Punto de control — Escaneo QR](#8-punto-de-control--escaneo-qr)
+9. [Panel de administración](#9-panel-de-administración)
+10. [Gestión de usuarios admin](#10-gestión-de-usuarios-admin)
+11. [Exportación de datos](#11-exportación-de-datos)
+12. [Modelo de datos](#12-modelo-de-datos)
+13. [Roles y permisos](#13-roles-y-permisos)
+14. [Stack tecnológico](#14-stack-tecnológico)
 
 ---
 
@@ -36,7 +39,114 @@ AidFlow permite digitalizar el flujo de entrega de ayuda humanitaria en tres pas
 
 ---
 
-## 2. Rutas y accesos
+## 2. Diagrama de flujo principal
+
+```mermaid
+flowchart TD
+    A([Persona llega con insumos]) --> B[Abre /registrar en su celular]
+    B --> C[Completa el formulario\nDatos personales + vehículo + insumos]
+    C --> D{¿Validación OK?}
+    D -- No --> C
+    D -- Sí --> E[Sistema genera QR firmado JWT\ny guarda registro en base de datos]
+    E --> F[Redirige a /credencial/id\nse muestra la tarjeta QR]
+    F --> G[Persona guarda o comparte el QR\nDescarga, WhatsApp o enlace]
+
+    G --> H([Llega al punto de control])
+    H --> I[Operador abre /escanear]
+    I --> J[Escanea el QR con la cámara]
+    J --> K{¿JWT válido?}
+    K -- No --> L[Muestra error: QR inválido]
+    K -- Sí --> M[Muestra datos: nombre, placa,\ndestino, prioridad, estado]
+    M --> N[Registra escaneo en DeliveryScan\ncon timestamp]
+
+    N --> O([Coordinador en panel admin])
+    O --> P[Abre /admin/entregas]
+    P --> Q[Filtra por estado o busca la entrega]
+    Q --> R[Abre detalle /admin/entregas/id]
+    R --> S{Decisión}
+    S -- Aprobar --> T[Estado: APROBADO]
+    S -- Rechazar --> U[Estado: RECHAZADO\nopcional: nota de motivo]
+    T --> V[Marcar en tránsito → EN_TRANSITO]
+    V --> W[Marcar completado → COMPLETADO]
+    W --> X([Entrega finalizada ✓])
+```
+
+---
+
+## 3. Interacción entre actores
+
+```mermaid
+sequenceDiagram
+    actor C as Ciudadano
+    actor O as Operador de Control
+    actor A as Coordinador Admin
+    participant S as Sistema AidFlow
+
+    C->>S: POST /registrar (nombre, cédula, insumos, vehículo)
+    S-->>S: Valida formulario con Zod
+    S-->>S: Firma JWT con QR_SECRET_KEY
+    S-->>S: Genera QR PNG base64
+    S-->>S: Guarda Delivery (estado: PENDIENTE)
+    S-->>C: Redirige a /credencial/[id] con QR visible
+
+    C->>C: Guarda o comparte el QR
+
+    Note over C,O: En el punto de control
+    C->>O: Presenta QR (imagen o URL)
+    O->>S: Escanea QR en /escanear
+    S-->>S: Verifica firma JWT
+    S-->>S: Registra DeliveryScan (timestamp)
+    S-->>O: Muestra datos: nombre, placa, destino, prioridad
+
+    Note over O,A: Panel de administración
+    A->>S: GET /admin/entregas (lista de pendientes)
+    S-->>A: Lista ordenada por prioridad
+    A->>S: POST aprobar/rechazar/transito/completar
+    S-->>S: Actualiza estado Delivery
+    S-->>S: Registra DeliveryAction (quién, cuándo, nota)
+    S-->>A: Confirma cambio de estado
+    S-->>C: Estado actualizado visible en /credencial/[id]
+```
+
+---
+
+## 4. Estados de una entrega
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDIENTE : Ciudadano se registra
+
+    PENDIENTE --> APROBADO : Coordinador aprueba
+    PENDIENTE --> RECHAZADO : Coordinador rechaza\n(con nota opcional)
+
+    APROBADO --> EN_TRANSITO : Coordinador marca en tránsito
+    APROBADO --> RECHAZADO : Coordinador rechaza
+
+    EN_TRANSITO --> COMPLETADO : Coordinador marca completado
+
+    RECHAZADO --> [*]
+    COMPLETADO --> [*]
+
+    note right of PENDIENTE
+        Estado inicial al registrarse.
+        Se muestra en dashboard con alerta
+        si la prioridad es URGENTE.
+    end note
+
+    note right of APROBADO
+        El QR sigue siendo válido.
+        Operadores en control pueden escanear.
+    end note
+
+    note right of COMPLETADO
+        Entrega finalizada con éxito.
+        Queda en historial para auditoría.
+    end note
+```
+
+---
+
+## 5. Rutas y accesos
 
 | Ruta | Acceso | Descripción |
 |------|--------|-------------|
@@ -53,7 +163,7 @@ AidFlow permite digitalizar el flujo de entrega de ayuda humanitaria en tres pas
 
 ---
 
-## 3. Registro público
+## 6. Registro público
 
 **Ruta:** `/registrar`
 
@@ -100,7 +210,7 @@ El formulario de registro es completamente público — no requiere cuenta ni au
 
 ---
 
-## 4. Credencial QR
+## 7. Credencial QR
 
 **Ruta:** `/credencial/[id]`
 
@@ -142,7 +252,7 @@ Página pública y compartible que muestra la credencial digital de un registro.
 
 ---
 
-## 5. Punto de control — Escaneo QR
+## 8. Punto de control — Escaneo QR
 
 **Ruta:** `/escanear`
 
@@ -181,7 +291,7 @@ Cada vez que se escanea un QR se guarda:
 
 ---
 
-## 6. Panel de administración
+## 9. Panel de administración
 
 **Acceso:** `/login` → `/admin`
 **Requiere:** cuenta de administrador activa
@@ -241,7 +351,7 @@ Muestra los últimos 10 escaneos del QR con fecha y hora.
 
 ---
 
-## 7. Gestión de usuarios admin
+## 10. Gestión de usuarios admin
 
 **Ruta:** `/admin/usuarios`
 **Requiere:** rol `SUPER_ADMIN`
@@ -269,7 +379,7 @@ Formulario inline con:
 
 ---
 
-## 8. Exportación de datos
+## 11. Exportación de datos
 
 **Endpoint:** `GET /api/export/entregas`
 **Requiere:** sesión de administrador activa
@@ -291,7 +401,7 @@ Sector Destino, Destinatario, Tipo Ayuda, Cantidad, Prioridad, Estado, Notas
 
 ---
 
-## 9. Modelo de datos
+## 12. Modelo de datos
 
 ### Delivery (Registro de entrega)
 
@@ -356,7 +466,7 @@ createdAt     — fecha de creación
 
 ---
 
-## 10. Roles y permisos
+## 13. Roles y permisos
 
 | Funcionalidad | Público | OPERADOR | ADMIN | SUPER_ADMIN |
 |---------------|---------|----------|-------|-------------|
@@ -385,7 +495,7 @@ Rol:        SUPER_ADMIN
 
 ---
 
-## 11. Stack tecnológico
+## 14. Stack tecnológico
 
 | Capa | Tecnología |
 |------|-----------|
@@ -412,4 +522,4 @@ NEXTAUTH_URL        # URL pública del sistema (ej: https://aidflow-laguaira.ver
 
 ---
 
-*Documento generado el 2026-06-28. Versión 1.0.*
+*Documento generado el 2026-06-28. Versión 1.1 — incluye diagramas de flujo y secuencia de actores.*
